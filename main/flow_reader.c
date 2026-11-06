@@ -8,6 +8,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "flows.h"
+#include "history.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -20,14 +21,19 @@ static const char *TAG = "flowread";
 #define MIN_RING_STRENGTH 10.0f   // mean redness of the ring row; prototype frames were 29-48
 
 // All tube strips live in this band of the full-resolution frame. Decoding stops below it.
-#define BAND_Y0 150
-#define BAND_Y1 380
+#define BAND_Y0 80
+#define BAND_Y1 420
 #define BAND_ROWS (BAND_Y1 - BAND_Y0)
 
-#define RING_SEARCH_Y0 150        // above the 0 mark
-#define RING_SEARCH_Y1 300        // just above the caps
-#define CAP_SEARCH_Y0  280
-#define CAP_SEARCH_Y1  380
+// The cap is found first, anywhere in CAP_SEARCH; the ring is then searched for in a window
+// hanging above it (cap - RING_ABOVE_FAR .. cap - RING_ABOVE_NEAR), so a camera that shifts by
+// a few tens of pixels still reads correctly. Fixed windows broke on 2026-11-06 when the
+// camera moved ~15 px and the cap's top edge fell inside the ring search.
+#define CAP_SEARCH_Y0   250
+#define CAP_SEARCH_Y1   420
+#define RING_ABOVE_FAR  170
+#define RING_ABOVE_NEAR 8
+#define RING_WINDOW     (RING_ABOVE_FAR - RING_ABOVE_NEAR)
 
 typedef struct {
     uint16_t x0, x1;              // strip around the rod, full-resolution pixels
@@ -178,12 +184,12 @@ static float row_mean(int t, int y)
     return s_rowsum[t][y - BAND_Y0] / (float)(s_cal[t].x1 - s_cal[t].x0);
 }
 
-static void ring_row(int t, float *row, float *strength)
+static void ring_row(int t, int y0, float *row, float *strength)
 {
-    float profile[RING_SEARCH_Y1 - RING_SEARCH_Y0];
-    const int n = RING_SEARCH_Y1 - RING_SEARCH_Y0;
+    float profile[RING_WINDOW];
+    const int n = RING_WINDOW;
     for (int i = 0; i < n; i++) {
-        profile[i] = row_mean(t, RING_SEARCH_Y0 + i);
+        profile[i] = row_mean(t, y0 + i);
     }
     // 5-row box smoothing, then the peak.
     int peak = 0;
@@ -210,7 +216,7 @@ static void ring_row(int t, float *row, float *strength)
         wsum += profile[i];
         msum += profile[i] * (i - lo);
     }
-    *row = RING_SEARCH_Y0 + lo + (wsum > 1e-6f ? msum / wsum : 0);
+    *row = y0 + lo + (wsum > 1e-6f ? msum / wsum : 0);
     *strength = best;
 }
 
@@ -248,11 +254,14 @@ static void read_once(void)
         return;
     }
 
+    float flows_now[FLOW_LOOP_COUNT];
+    bool valid_now[FLOW_LOOP_COUNT];
     xSemaphoreTake(s_cal_lock, portMAX_DELAY);
     for (int t = 0; t < FLOW_LOOP_COUNT; t++) {
         float row, strength;
-        ring_row(t, &row, &strength);
-        float height = (float)cap_top(t) - row;
+        int cap = cap_top(t);
+        ring_row(t, cap - RING_ABOVE_FAR, &row, &strength);
+        float height = (float)cap - row;
         bool ok = strength >= MIN_RING_STRENGTH;
         s_last[t] = (tube_raw_t){.valid = ok, .height_px = height, .strength = strength};
 
@@ -261,10 +270,13 @@ static void read_once(void)
             flow = 0; // the ring can sit a pixel or two above its zero
         }
         flows_set_measurement(t, ok, flow, height, strength);
+        flows_now[t] = flow;
+        valid_now[t] = ok;
         ESP_LOGI(TAG, "Loop %d: height %.1f px, strength %.1f -> %.2f L/min%s", t + 1, height,
                  strength, flow, ok ? "" : " (ring not found)");
     }
     xSemaphoreGive(s_cal_lock);
+    history_add(flows_now, valid_now);
     ESP_LOGI(TAG, "Read in %lld ms (capture %lld, decode %lld)", (t2 - t0) / 1000, (t1 - t0) / 1000,
              (t2 - t1) / 1000);
 }

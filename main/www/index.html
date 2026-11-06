@@ -31,6 +31,10 @@
   --rod: #1d2733;
   --spring: #7b8792;
   --stud: #1f2328;
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --grid: #e3e9ef;
   --good: #2f9e44;
   --warn: #e8890c;
   --bad: #d9363e;
@@ -43,6 +47,7 @@
     --border: #2a3746; --glass: #2a3d50; --pill-bg: #243243; --accent: #6aa9ec;
     --chrome-hi: #e3e8ec; --chrome-mid: #a9b2bb; --chrome-lo: #6c7781; --steel-hi: #cfd6dc; --steel-lo: #8c969f;
     --rod: #0b1016; --spring: #9aa6b1;
+    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --grid: #26313d;
   }
 }
 :root[data-theme="dark"] {
@@ -50,6 +55,7 @@
   --border: #2a3746; --glass: #2a3d50; --pill-bg: #243243; --accent: #6aa9ec;
   --chrome-hi: #e3e8ec; --chrome-mid: #a9b2bb; --chrome-lo: #6c7781; --steel-hi: #cfd6dc; --steel-lo: #8c969f;
   --rod: #0b1016; --spring: #9aa6b1;
+  --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --grid: #26313d;
 }
 * { box-sizing: border-box; }
 body {
@@ -99,6 +105,24 @@ svg text { font-family: inherit; fill: var(--ink); }
 .kv dt { color: var(--muted); font-size: .85rem; font-weight: 600; }
 .kv dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 #fwFile { font: inherit; color: var(--ink); max-width: 100%; }
+.hist-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.hist-head h2 { font-size: 1rem; margin: 0; flex: 1 1 auto; }
+.seg { display: inline-flex; background: var(--pill-bg); border-radius: 10px; padding: 2px; }
+.seg button { border: 0; background: transparent; color: var(--muted); font: inherit; font-weight: 600;
+  font-size: .85rem; padding: 4px 10px; border-radius: 8px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--card); color: var(--ink); }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: .85rem; color: var(--ink); margin-bottom: 4px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+.chart-wrap { position: relative; }
+svg.chart { width: 100%; height: 240px; display: block; overflow: visible; }
+svg.chart text { font-size: 11px; fill: var(--muted); }
+.tip { position: absolute; pointer-events: none; background: var(--card); border: 1px solid var(--border);
+  border-radius: 10px; padding: 8px 10px; font-size: .8rem; box-shadow: 0 4px 14px rgba(0,0,0,.12);
+  white-space: nowrap; transform: translate(-50%, -100%); color: var(--ink); }
+.tip b { font-variant-numeric: tabular-nums; }
+.tip .k { display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+.empty { color: var(--muted); font-size: .9rem; padding: 40px 0; text-align: center; }
 footer { color: var(--muted); font-size: .8rem; text-align: center; margin: 24px 0 8px; }
 @media (max-width: 700px) {
   .loops { grid-template-columns: 1fr; }
@@ -137,6 +161,23 @@ footer { color: var(--muted); font-size: .8rem; text-align: center; margin: 24px
       <div class="card tile"><div class="label">Balance</div><div class="value" id="tBalance">—</div><div class="sub" id="tBalanceSub">spread between loops</div></div>
       <div class="card tile"><div class="label">Camera</div><div class="value" id="tCamera">—</div><div class="sub" id="tCameraSub">—</div></div>
       <div class="card tile"><div class="label">Device</div><div class="value" id="tUptime">—</div><div class="sub" id="tDevice">—</div></div>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <div class="hist-head">
+        <h2>Flow history</h2>
+        <div class="seg" role="group" aria-label="Time range">
+          <button data-h="6" aria-pressed="false">6 h</button>
+          <button data-h="24" aria-pressed="true">24 h</button>
+          <button data-h="168" aria-pressed="false">7 d</button>
+        </div>
+      </div>
+      <div class="legend" id="legend"></div>
+      <div class="chart-wrap" id="chartWrap">
+        <svg class="chart" id="chart" role="img" aria-label="Flow per loop over time, L/min"></svg>
+        <div class="tip hidden" id="tip"></div>
+      </div>
+      <p class="meta">Kept in the board's memory, so history restarts when the board reboots.</p>
     </div>
   </section>
 
@@ -546,8 +587,122 @@ footer { color: var(--muted); font-size: .8rem; text-align: center; margin: 24px
     setTimeout(tick, 3000);
   }
 
+  // ---------- Flow history chart ----------
+  const SERIES = ['var(--series-1)', 'var(--series-2)', 'var(--series-3)'];
+  let histHours = 24, hist = null, histFetchedAt = 0;
+  const chart = document.getElementById('chart');
+  const tip = document.getElementById('tip');
+
+  document.querySelectorAll('.seg button').forEach(b => b.onclick = () => {
+    document.querySelectorAll('.seg button').forEach(x => x.setAttribute('aria-pressed', x === b));
+    histHours = +b.dataset.h; loadHistory();
+  });
+
+  async function loadHistory() {
+    try {
+      const r = await fetch('/api/history?hours=' + histHours, { cache: 'no-store' });
+      hist = await r.json(); histFetchedAt = Date.now();
+      drawHistory();
+    } catch (e) { /* keep the last chart */ }
+  }
+
+  function loopNames() { return state ? state.loops.map(l => l.name) : ['Loop 1', 'Loop 2', 'Loop 3']; }
+
+  function drawHistory() {
+    const names = loopNames();
+    document.getElementById('legend').innerHTML = names.map((n, i) =>
+      `<span><i style="background:${SERIES[i]}"></i>${n.replace(/[<&]/g, '')}</span>`).join('');
+    while (chart.firstChild) chart.removeChild(chart.firstChild);
+    const pts = hist ? hist.points : [];
+    if (!pts.length) {
+      const t = el('text', { x: '50%', y: 120, 'text-anchor': 'middle' }, chart);
+      t.textContent = 'No readings yet — the first one arrives within a minute of boot.';
+      return;
+    }
+    const W = chart.clientWidth || 600, H = 240, L = 36, R = 96, T = 10, B = 24;
+    chart.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    const nowMs = histFetchedAt;
+    const xs = pts.map(p => nowMs - p[0] * 1000);
+    const x0 = nowMs - histHours * 3600 * 1000, x1 = nowMs;
+    let ymax = 0; pts.forEach(p => p.slice(1).forEach(v => { if (v != null && v > ymax) ymax = v; }));
+    ymax = Math.max(1.5, Math.ceil(ymax * 1.25 * 2) / 2);
+    const X = t => L + (W - L - R) * (t - x0) / (x1 - x0);
+    const Y = v => T + (H - T - B) * (1 - v / ymax);
+
+    // Recessive grid + y labels.
+    const step = ymax <= 2 ? 0.5 : 1;
+    for (let v = 0; v <= ymax + 1e-9; v += step) {
+      el('line', { x1: L, x2: W - R, y1: Y(v), y2: Y(v), stroke: 'var(--grid)', 'stroke-width': 1 }, chart);
+      const t = el('text', { x: L - 6, y: Y(v) + 4, 'text-anchor': 'end' }, chart); t.textContent = v.toFixed(step < 1 ? 1 : 0);
+    }
+    // X ticks at local time.
+    const tickMs = histHours <= 6 ? 3600e3 : histHours <= 24 ? 4 * 3600e3 : 24 * 3600e3;
+    const first = Math.ceil(x0 / tickMs) * tickMs;
+    for (let t = first; t <= x1; t += tickMs) {
+      const d = new Date(t);
+      const label = histHours > 24 ? d.toLocaleDateString([], { weekday: 'short' })
+                                   : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const tx = el('text', { x: X(t), y: H - 6, 'text-anchor': 'middle' }, chart); tx.textContent = label;
+    }
+
+    // Lines, broken at gaps (a missing value or a jump of more than 3 buckets).
+    const gap = hist.bucketSeconds * 3 * 1000;
+    for (let s = 0; s < 3; s++) {
+      let d = '', prevX = null;
+      pts.forEach((p, i) => {
+        const v = p[s + 1];
+        if (v == null) { prevX = null; return; }
+        const cmd = (prevX == null || xs[i] - prevX > gap) ? 'M' : 'L';
+        d += `${cmd}${X(xs[i]).toFixed(1)},${Y(v).toFixed(1)} `;
+        prevX = xs[i];
+      });
+      el('path', { d, fill: 'none', stroke: SERIES[s], 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, chart);
+    }
+    // Direct labels at the right end, nudged apart so they never overlap.
+    const last = [0, 1, 2].map(s => { for (let i = pts.length - 1; i >= 0; i--) if (pts[i][s + 1] != null) return { s, y: Y(pts[i][s + 1]), v: pts[i][s + 1] }; return null; }).filter(Boolean);
+    last.sort((a, b) => a.y - b.y);
+    for (let i = 1; i < last.length; i++) if (last[i].y - last[i - 1].y < 13) last[i].y = last[i - 1].y + 13;
+    last.forEach(o => {
+      const t = el('text', { x: W - R + 6, y: o.y + 4, style: 'fill:var(--ink);font-weight:600' }, chart);
+      t.textContent = names[o.s].length > 13 ? names[o.s].slice(0, 12) + '…' : names[o.s];
+    });
+
+    // Hover: crosshair + tooltip on the nearest bucket.
+    const cross = el('line', { y1: T, y2: H - B, stroke: 'var(--muted)', 'stroke-width': 1, opacity: 0 }, chart);
+    const dots = [0, 1, 2].map(s => el('circle', { r: 4, fill: SERIES[s], stroke: 'var(--card)', 'stroke-width': 2, opacity: 0 }, chart));
+    const hit = el('rect', { x: L, y: T, width: W - L - R, height: H - T - B, fill: 'transparent' }, chart);
+    const move = ev => {
+      const box = chart.getBoundingClientRect();
+      const mx = (ev.touches ? ev.touches[0].clientX : ev.clientX) - box.left;
+      const t = x0 + (mx * (W / box.width) - L) / (W - L - R) * (x1 - x0);
+      let bi = 0, bd = Infinity;
+      xs.forEach((x, i) => { const dd = Math.abs(x - t); if (dd < bd) { bd = dd; bi = i; } });
+      const px = X(xs[bi]);
+      cross.setAttribute('x1', px); cross.setAttribute('x2', px); cross.setAttribute('opacity', .5);
+      const rows = [];
+      dots.forEach((dot, s) => {
+        const v = pts[bi][s + 1];
+        if (v == null) { dot.setAttribute('opacity', 0); return; }
+        dot.setAttribute('cx', px); dot.setAttribute('cy', Y(v)); dot.setAttribute('opacity', 1);
+        rows.push(`<div><span class="k" style="background:${SERIES[s]}"></span>${names[s].replace(/[<&]/g, '')} <b>${v.toFixed(2)}</b> L/min</div>`);
+      });
+      const when = new Date(xs[bi]).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+      tip.innerHTML = `<div style="color:var(--muted);margin-bottom:4px">${when}</div>` + rows.join('');
+      tip.classList.remove('hidden');
+      tip.style.left = Math.min(Math.max(px * box.width / W, 70), box.width - 70) + 'px';
+      tip.style.top = '8px';
+    };
+    const leave = () => { tip.classList.add('hidden'); cross.setAttribute('opacity', 0); dots.forEach(d => d.setAttribute('opacity', 0)); };
+    hit.addEventListener('mousemove', move); hit.addEventListener('touchmove', move, { passive: true });
+    hit.addEventListener('touchstart', move, { passive: true });
+    hit.addEventListener('mouseleave', leave); hit.addEventListener('touchend', leave);
+  }
+  window.addEventListener('resize', () => { if (hist) drawHistory(); });
+
   drawManifold();
   poll();
+  loadHistory();
+  setInterval(loadHistory, 60000);
   setInterval(poll, 5000);
 })();
 </script>

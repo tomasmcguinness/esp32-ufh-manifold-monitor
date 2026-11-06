@@ -9,6 +9,7 @@
 #include "esp_log.h"
 #include "flow_reader.h"
 #include "flows.h"
+#include "history.h"
 #include "ota.h"
 
 static const char *TAG = "web";
@@ -124,6 +125,29 @@ static esp_err_t loop_handler(httpd_req_t *req)
     return httpd_resp_sendstr(req, "ok");
 }
 
+// GET /api/history?hours=24 (1-168)
+static esp_err_t history_handler(httpd_req_t *req)
+{
+    int hours = 24;
+    char query[24] = {0};
+    char val[8] = {0};
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK &&
+        httpd_query_key_value(query, "hours", val, sizeof(val)) == ESP_OK) {
+        hours = atoi(val);
+    }
+    size_t len = 0;
+    char *json = history_build_json(hours, &len);
+    if (!json) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "history unavailable");
+        return ESP_FAIL;
+    }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    esp_err_t err = httpd_resp_send(req, json, len);
+    free(json);
+    return err;
+}
+
 // POST /api/read: take a reading now.
 static esp_err_t read_handler(httpd_req_t *req)
 {
@@ -197,6 +221,7 @@ esp_err_t web_server_start(void)
         {.uri = "/api/loop", .method = HTTP_POST, .handler = loop_handler},
         {.uri = "/api/framesize", .method = HTTP_POST, .handler = framesize_handler},
         {.uri = "/api/read", .method = HTTP_POST, .handler = read_handler},
+        {.uri = "/api/history", .method = HTTP_GET, .handler = history_handler},
         {.uri = "/api/calibrate", .method = HTTP_POST, .handler = calibrate_handler},
     };
     for (size_t i = 0; i < sizeof(uris) / sizeof(uris[0]); i++) {

@@ -33,6 +33,7 @@ clearly labelled made-up numbers.
 | `/` | GET | Dashboard (embedded from `main/www/index.html`) |
 | `/api/flows` | GET | Loops (name, `flowLpm`, `scaleMaxLpm`, `ageSeconds`), total, measurement state, device info |
 | `/api/loop?id=1&name=Kitchen` | POST | Rename a loop (1-23 characters) |
+| `/api/history?hours=24` | GET | Flow per loop, averaged into at most 720 points (1-168 h); in RAM, lost on reboot |
 | `/api/read` | POST | Take a reading now instead of waiting for the next minute |
 | `/api/calibrate?zero=1[&loop=N]` | POST | The loops (or loop N) are at 0 L/min now |
 | `/api/calibrate?lpm=1.1[&loop=N]` | POST | The loops (or loop N) read 1.1 L/min now (set zero first) |
@@ -63,8 +64,14 @@ position of 2026-11-06. If the camera moves:
 1. With the flow off, `POST /api/read`, wait ~5 s, then `POST /api/calibrate?zero=1`.
 2. With the flow on, read the meters by eye, `POST /api/read`, then `POST /api/calibrate?lpm=<reading>`.
 
-The tube strip positions (x ranges, and the row band 150-380) are constants in
-`main/flow_reader.c`; a big move of the camera needs them updated. `tools/flow_prototype.py`
+Each tube's red cap is found first and the ring is searched for in a window above it, so a
+camera knocked by a few tens of pixels still reads correctly. The tube x ranges and the decoded
+row band (80-420) are constants in `main/flow_reader.c`; a bigger move needs them updated.
+
+**Lighting matters.** Readings need steady, even light: with the cupboard dark the image goes
+grainy and ring strength drops below the threshold, so loops show no reading rather than a
+wrong one. A torch causes glare on the glass. Lighting the white wall behind the tubes, or soft
+light from about 45° to the camera, should work best. `tools/flow_prototype.py`
 runs the same algorithm on saved frames for working them out. Each loop's `raw` block in
 `/api/flows` shows the measured height and ring strength (below 10 means the ring was not found).
 

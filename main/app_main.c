@@ -5,6 +5,7 @@
 #include "ethernet.h"
 #include "flow_reader.h"
 #include "flows.h"
+#include "history.h"
 #include "mdns.h"
 #include "nvs_flash.h"
 #include "ota.h"
@@ -44,6 +45,7 @@ void app_main(void)
     if (camera_start() != ESP_OK) {
         ESP_LOGE(TAG, "Continuing without a camera; /capture.jpg will return 500");
     } else {
+        history_init();
         flow_reader_start();
     }
 
