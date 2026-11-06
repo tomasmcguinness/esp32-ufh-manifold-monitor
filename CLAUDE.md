@@ -27,6 +27,9 @@ Always pass `-C`, and use `set -o pipefail` if you pipe the output, or a failed 
 - Console is USB-Serial-JTAG on `/dev/ttyACM0`; deasserting DTR resets the board.
 - mDNS works here (`ufh-monitor.local`) because there is no CHIP stack competing for UDP 5353.
 - The dashboard is `main/www/index.html`, embedded with `EMBED_TXTFILES`; data comes from `/api/flows` (`flows.c`). Analysis should feed readings in through `flows_set_reading()`.
+- Flow reading: `main/flow_reader.c` mirrors `tools/flow_prototype.py`; change both together and
+  check the prototype against `tools/fixtures/`. It decodes with the ROM TJpgDec (`rom/tjpgd.h`)
+  and stops below row 380: a full 2560x1920 RGB decode would not fit in PSRAM.
 - OTA: `main/ota.c` handles `POST /api/ota`. `ota_mark_running_app_valid()` runs in `app_main` after
   the IP arrives; keep it after everything a remote update depends on, or a broken image can't roll back.
   Rollback (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`) lives in the bootloader, so it needs a USB flash to change.

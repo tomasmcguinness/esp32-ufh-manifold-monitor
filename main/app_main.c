@@ -3,6 +3,7 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "ethernet.h"
+#include "flow_reader.h"
 #include "flows.h"
 #include "mdns.h"
 #include "nvs_flash.h"
@@ -42,6 +43,8 @@ void app_main(void)
     // immediately, without waiting on DHCP.
     if (camera_start() != ESP_OK) {
         ESP_LOGE(TAG, "Continuing without a camera; /capture.jpg will return 500");
+    } else {
+        flow_reader_start();
     }
 
     ESP_ERROR_CHECK(ethernet_start());

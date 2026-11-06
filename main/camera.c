@@ -37,6 +37,7 @@ static const char *TAG = "camera";
 static SemaphoreHandle_t s_lock;
 static bool s_ready;
 static const char *s_sensor_name = "none";
+static framesize_t s_live_size = FRAMESIZE_SVGA; // what the live view last asked for
 
 bool camera_is_ready(void)
 {
@@ -145,6 +146,47 @@ esp_err_t camera_set_framesize(framesize_t size)
     }
     xSemaphoreTake(s_lock, portMAX_DELAY);
     int rc = s->set_framesize(s, size);
+    if (rc == 0) {
+        s_live_size = size;
+    }
     xSemaphoreGive(s_lock);
     return rc == 0 ? ESP_OK : ESP_FAIL;
+}
+
+camera_fb_t *camera_capture_full_res(void)
+{
+    if (!s_ready) {
+        return NULL;
+    }
+    sensor_t *s = esp_camera_sensor_get();
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (s->set_framesize(s, FRAMESIZE_QSXGA) != 0) {
+        xSemaphoreGive(s_lock);
+        return NULL;
+    }
+    // Frames already queued, or exposed during the switch, are at the old size or
+    // half-settled. Drop a few before keeping one.
+    for (int i = 0; i < 3; i++) {
+        camera_fb_t *stale = esp_camera_fb_get();
+        if (stale) {
+            esp_camera_fb_return(stale);
+        }
+    }
+    camera_fb_t *fb = esp_camera_fb_get();
+    if (!fb) {
+        s->set_framesize(s, s_live_size);
+        xSemaphoreGive(s_lock);
+    }
+    return fb;
+}
+
+void camera_release_full_res(camera_fb_t *fb)
+{
+    if (!fb) {
+        return;
+    }
+    esp_camera_fb_return(fb);
+    sensor_t *s = esp_camera_sensor_get();
+    s->set_framesize(s, s_live_size);
+    xSemaphoreGive(s_lock);
 }

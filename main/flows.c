@@ -87,15 +87,21 @@ esp_err_t flows_set_name(int index, const char *name)
     return ESP_OK;
 }
 
-void flows_set_reading(int index, float flow_lpm)
+void flows_set_measurement(int index, bool valid, float flow_lpm, float height_px, float strength)
 {
     if (index < 0 || index >= FLOW_LOOP_COUNT) {
         return;
     }
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    s_loops[index].valid = true;
-    s_loops[index].flow_lpm = flow_lpm;
-    s_loops[index].updated_us = esp_timer_get_time();
+    flow_loop_t *l = &s_loops[index];
+    l->measured = true;
+    l->height_px = height_px;
+    l->strength = strength;
+    l->valid = valid;
+    if (valid) {
+        l->flow_lpm = flow_lpm;
+        l->updated_us = esp_timer_get_time();
+    }
     xSemaphoreGive(s_lock);
 }
 
@@ -146,6 +152,9 @@ int flows_build_json(char *buf, size_t len)
         APPEND("%s{\"id\":%d,\"name\":", i ? "," : "", i + 1);
         n += (size_t)json_str(buf + n, n < len ? len - n : 0, l->name);
         APPEND(",\"scaleMaxLpm\":%.1f", l->scale_max_lpm);
+        if (l->measured) {
+            APPEND(",\"raw\":{\"heightPx\":%.1f,\"strength\":%.1f}", l->height_px, l->strength);
+        }
         if (l->valid) {
             any_valid = true;
             total += l->flow_lpm;

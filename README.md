@@ -22,14 +22,20 @@ current reading, and shows per-loop L/min, total flow, the balance between loops
 and device status. Loops can be renamed (stored in NVS). The **Camera** tab shows the live frame
 for lining up the shot.
 
-There's no float detection yet, so every reading is `null` and the page says "Not calibrated".
-"Preview with sample values" animates the drawing with clearly labelled made-up numbers.
+Every 60 seconds the board reads the floats (`main/flow_reader.c`): it captures a 2560x1920 frame,
+decodes only the band of rows holding the tubes, finds each red float ring, measures its height
+above the red cap, and converts that to L/min with a per-loop calibration. With no readings yet,
+the page says "Not calibrated" and "Preview with sample values" animates the drawing with
+clearly labelled made-up numbers.
 
 | Endpoint | Method | Purpose |
 |---|---|---|
 | `/` | GET | Dashboard (embedded from `main/www/index.html`) |
 | `/api/flows` | GET | Loops (name, `flowLpm`, `scaleMaxLpm`, `ageSeconds`), total, measurement state, device info |
 | `/api/loop?id=1&name=Kitchen` | POST | Rename a loop (1-23 characters) |
+| `/api/read` | POST | Take a reading now instead of waiting for the next minute |
+| `/api/calibrate?zero=1[&loop=N]` | POST | The loops (or loop N) are at 0 L/min now |
+| `/api/calibrate?lpm=1.1[&loop=N]` | POST | The loops (or loop N) read 1.1 L/min now (set zero first) |
 | `/api/ota` | POST | Install firmware: raw `.bin` as the body (or use the **Firmware** tab) |
 | `/capture.jpg` | GET | Single JPEG frame |
 | `/api/framesize?size=svga\|xga\|sxga\|uxga\|qxga\|qsxga` | POST | Change resolution |
@@ -47,6 +53,20 @@ There's no float detection yet, so every reading is `null` and the page says "No
    from its printed scale, interpolating between them.
 5. **Publish.** Sample every minute or so, expose per-loop L/min over HTTP JSON, then decide on
    MQTT/Matter and whether to feed `matter-esp32-heating-monitor`.
+
+## Calibration
+
+The floats move **down** with flow (0 at the top of each tube). Each loop has a zero height and a
+pixels-per-L/min scale, stored in NVS. The defaults come from `tools/fixtures/` and fit the camera
+position of 2026-11-06. If the camera moves:
+
+1. With the flow off, `POST /api/read`, wait ~5 s, then `POST /api/calibrate?zero=1`.
+2. With the flow on, read the meters by eye, `POST /api/read`, then `POST /api/calibrate?lpm=<reading>`.
+
+The tube strip positions (x ranges, and the row band 150-380) are constants in
+`main/flow_reader.c`; a big move of the camera needs them updated. `tools/flow_prototype.py`
+runs the same algorithm on saved frames for working them out. Each loop's `raw` block in
+`/api/flows` shows the measured height and ring strength (below 10 means the ring was not found).
 
 ## Build
 

@@ -15,6 +15,9 @@ typedef struct {
     bool valid;            // false until the camera analysis produces a reading
     float flow_lpm;
     int64_t updated_us;    // esp_timer time of the last reading
+    bool measured;         // the reader has run at least once
+    float height_px;       // raw: float ring height above the cap
+    float strength;        // raw: ring redness; low means the ring was not found
 } flow_loop_t;
 
 // Load loop names from NVS (defaults "Loop 1".."Loop 3").
@@ -26,8 +29,9 @@ void flows_get(flow_loop_t out[FLOW_LOOP_COUNT]);
 // Rename a loop (index 0..FLOW_LOOP_COUNT-1) and persist it.
 esp_err_t flows_set_name(int index, const char *name);
 
-// Record a reading from the analysis. Not called yet: there is no float detection.
-void flows_set_reading(int index, float flow_lpm);
+// Record a reading from the flow reader. `valid` false keeps the raw values for
+// diagnostics but withdraws the flow figure.
+void flows_set_measurement(int index, bool valid, float flow_lpm, float height_px, float strength);
 
 // Write the dashboard JSON into buf. Returns the length, or -1 if it does not fit.
 int flows_build_json(char *buf, size_t len);

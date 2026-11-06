@@ -7,6 +7,7 @@
 #include "camera.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
+#include "flow_reader.h"
 #include "flows.h"
 #include "ota.h"
 
@@ -123,10 +124,64 @@ static esp_err_t loop_handler(httpd_req_t *req)
     return httpd_resp_sendstr(req, "ok");
 }
 
+// POST /api/read: take a reading now.
+static esp_err_t read_handler(httpd_req_t *req)
+{
+    flow_reader_trigger();
+    return httpd_resp_sendstr(req, "ok");
+}
+
+// POST /api/calibrate?zero=1[&loop=N]   all (or loop N) are at 0 L/min now
+// POST /api/calibrate?lpm=1.1[&loop=N]  all (or loop N) read 1.1 L/min now
+// Uses the most recent reading; POST /api/read and wait a few seconds first.
+static esp_err_t calibrate_handler(httpd_req_t *req)
+{
+    char query[64] = {0};
+    char val[12] = {0};
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "zero=1 or lpm=<value> required");
+        return ESP_FAIL;
+    }
+    int loop = -1;
+    if (httpd_query_key_value(query, "loop", val, sizeof(val)) == ESP_OK) {
+        loop = atoi(val) - 1;
+        if (loop < 0 || loop >= FLOW_LOOP_COUNT) {
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "loop must be 1-3");
+            return ESP_FAIL;
+        }
+    }
+
+    esp_err_t err;
+    if (httpd_query_key_value(query, "zero", val, sizeof(val)) == ESP_OK) {
+        err = flow_reader_calibrate_zero(loop);
+    } else if (httpd_query_key_value(query, "lpm", val, sizeof(val)) == ESP_OK) {
+        err = flow_reader_calibrate_flow(loop, strtof(val, NULL));
+    } else {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "zero=1 or lpm=<value> required");
+        return ESP_FAIL;
+    }
+
+    if (err == ESP_ERR_INVALID_ARG) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "lpm must be between 0.2 and 10");
+        return ESP_FAIL;
+    }
+    if (err == ESP_ERR_INVALID_STATE) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                            "no usable reading: ring not found, or not far enough from zero");
+        return ESP_FAIL;
+    }
+    if (err != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, esp_err_to_name(err));
+        return ESP_FAIL;
+    }
+    return httpd_resp_sendstr(req, "ok");
+}
+
 esp_err_t web_server_start(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.stack_size = 8192;
+    config.max_uri_handlers = 12;
 
     httpd_handle_t server = NULL;
     esp_err_t err = httpd_start(&server, &config);
@@ -141,6 +196,8 @@ esp_err_t web_server_start(void)
         {.uri = "/api/flows", .method = HTTP_GET, .handler = flows_handler},
         {.uri = "/api/loop", .method = HTTP_POST, .handler = loop_handler},
         {.uri = "/api/framesize", .method = HTTP_POST, .handler = framesize_handler},
+        {.uri = "/api/read", .method = HTTP_POST, .handler = read_handler},
+        {.uri = "/api/calibrate", .method = HTTP_POST, .handler = calibrate_handler},
     };
     for (size_t i = 0; i < sizeof(uris) / sizeof(uris[0]); i++) {
         httpd_register_uri_handler(server, &uris[i]);

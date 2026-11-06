@@ -18,5 +18,11 @@ const char *camera_sensor_name(void);
 camera_fb_t *camera_capture(void);
 void camera_release(camera_fb_t *fb);
 
+// Grab one full-resolution (QSXGA) frame for analysis, switching the sensor up and
+// discarding stale frames first. Holds the camera until camera_release_full_res(), which
+// restores the live-view resolution.
+camera_fb_t *camera_capture_full_res(void);
+void camera_release_full_res(camera_fb_t *fb);
+
 // Change the capture resolution at runtime (FRAMESIZE_SVGA up to FRAMESIZE_QSXGA).
 esp_err_t camera_set_framesize(framesize_t size);
